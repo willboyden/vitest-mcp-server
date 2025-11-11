@@ -228,6 +228,27 @@ generate_badge() {
     fi
 }
 
+# Generate visual coverage heatmap
+generate_heatmap() {
+    log_info "Generating interactive coverage heatmap..."
+    
+    response=$(curl -s "$BASE/generate-heatmap")
+    
+    if echo "$response" | jq -e '.success' > /dev/null 2>&1; then
+        local heatmap_url=$(echo "$response" | jq -r '.url')
+        
+        log_success "Coverage heatmap generated successfully!"
+        echo ""
+        log_info "Interactive heatmap available at: http://localhost:3000$heatmap_url"
+        
+        # Show the heatmap URL for easy access
+        echo "$response" | jq -r '.message' || true
+    else
+        log_warning "Heatmap generation failed: $response"
+        log_info "Make sure coverage has been run first (npm run coverage)"
+    fi
+}
+
 # Generate CI workflow
 generate_workflow() {
     log_info "Generating GitHub Actions workflow..."
@@ -292,6 +313,9 @@ main() {
     generate_badge
     echo ""
     
+    generate_heatmap
+    echo ""
+    
     generate_workflow
     echo ""
     
@@ -326,7 +350,8 @@ case "${1:-}" in
         echo "5. Generate AI-powered tests (if OpenAI key available)"
         echo "6. Profile test performance"
         echo "7. Generate coverage badge"
-        echo "8. Create CI workflow configuration"
+        echo "8. Create interactive coverage heatmap"
+        echo "9. Generate CI workflow configuration"
         exit 0
         ;;
     *)
