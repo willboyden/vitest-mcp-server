@@ -5,7 +5,7 @@ import fs from 'fs-extra';
 /**
  * Runs Vitest with coverage enabled and returns a JSON object describing uncovered lines.
  */
-export async function analyzeCoverage(projectRoot: string): Promise<any> {
+export async function analyzeCoverageImpl(projectRoot: string): Promise<any> {
   const vitestCmd = 'npx vitest run --coverage --reporter=json';
   return new Promise((resolve, reject) => {
     exec(vitestCmd, { cwd: projectRoot }, async (error, stdout, stderr) => {
@@ -47,3 +47,21 @@ export async function analyzeCoverage(projectRoot: string): Promise<any> {
     });
   });
 }
+
+// Plugin export for dynamic loading
+export default {
+  name: 'coverage-analyzer',
+  router(app: any) {
+    app.post('/analyze-coverage', async (req: any, res: any) => {
+      const { projectPath } = req.body;
+      if (!projectPath) return res.status(400).json({ error: 'Missing projectPath' });
+      try {
+        const result = await analyzeCoverageImpl(projectPath);
+        res.json({ success: true, uncovered: result.uncovered, coveragePath: result.coveragePath });
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ success: false, error: (e as any).error || e });
+      }
+    });
+  },
+};

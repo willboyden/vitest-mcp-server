@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  vitest-mcp-server:
+    build: .
+    container_name: vitest-coverage-mcp
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=info
+      - PORT=3000
+    volumes:
+      # Mount project directories for analysis
+      - ./projects:/app/projects:ro
+      - mcp_data:/app/data
+    depends_on:
+      - redis
+    networks:
+      - mcp_network
+    restart: unless-stopped
+
+  # Optional Redis for caching and session management
+  redis:
+    image: redis/redis-stack:latest
+    container_name: mcp_redis
+    ports:
+      - "6379:6379"
+      - "8001:8001"  # RedisInsight for visualization
+    volumes:
+      - redis_data:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
+    environment:
+      - REDIS_ARGS=--save 900 1 --save 300 10 --save 60 1000
+    networks:
+      - mcp_network
+    restart: unless-stopped
+
+  # RedisInsight for database visualization (optional)
+  redis-insight:
+    image: redislabs/redisinsight:latest
+    container_name: redis_insight
+    ports:
+      - "8001:8001"
+    environment:
+      - RITRUSTEDORIGINS=http://localhost:8001
+    depends_on:
+      - redis
+    networks:
+      - mcp_network
+    restart: unless-stopped
+
+volumes:
+  mcp_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  mcp_network:
+    driver: bridge

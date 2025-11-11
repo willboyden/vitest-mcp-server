@@ -7,7 +7,7 @@ import glob from 'glob';
  * It creates a __tests__ directory mirroring the source structure and adds
  * a simple render test using @testing-library/react.
  */
-export async function generateTests(projectRoot: string, uncoveredFiles: string[]): Promise<any> {
+export async function generateTestsImpl(projectRoot: string, uncoveredFiles: string[]): Promise<any> {
   const testPromises = uncoveredFiles.map(async (filePath) => {
     // Resolve absolute path
     const absPath = path.isAbsolute(filePath) ? filePath : path.join(projectRoot, filePath);
@@ -43,3 +43,30 @@ export async function generateTests(projectRoot: string, uncoveredFiles: string[
   const results = await Promise.all(testPromises);
   return results.filter(Boolean);
 }
+
+// Plugin export for dynamic loading
+export default {
+  name: 'test-generator',
+  router(app: any) {
+    app.post('/generate-tests', async (req: any, res: any) => {
+      const { projectPath, uncoveredFiles } = req.body;
+      if (!projectPath) return res.status(400).json({ error: 'Missing projectPath' });
+      try {
+        let files = uncoveredFiles as string[] | undefined;
+        if (!files) {
+          // Import the analyzeCoverage tool dynamically
+          const { analyzeCoverageImpl } = await import('./analyzeCoverage.js');
+          const analysis = await analyzeCoverageImpl(projectPath);
+          files = analysis.uncovered.map((u: any) => u.file);
+        }
+        // Deduplicate file list
+        const uniqueFiles = Array.from(new Set(files));
+        const generated = await generateTestsImpl(projectPath, uniqueFiles);
+        res.json({ success: true, generatedTestFiles: generated });
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ success: false, error: (e as any).error || e });
+      }
+    });
+  },
+};

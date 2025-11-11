@@ -5,7 +5,7 @@ import { exec } from 'child_process';
 /**
  * Installs Vitest, React Testing Library and creates a basic vitest.config.ts if missing.
  */
-export async function setupVitest(projectRoot: string): Promise<any> {
+export async function setupVitestImpl(projectRoot: string): Promise<any> {
   const vitestConfigPath = path.join(projectRoot, 'vitest.config.ts');
 
   // Ensure vitest config exists
@@ -37,3 +37,21 @@ export async function setupVitest(projectRoot: string): Promise<any> {
     });
   });
 }
+
+// Plugin export for dynamic loading
+export default {
+  name: 'vitest-setup',
+  router(app: any) {
+    app.post('/setup-vitest', async (req: any, res: any) => {
+      const { projectPath } = req.body;
+      if (!projectPath) return res.status(400).json({ error: 'Missing projectPath' });
+      try {
+        const result = await setupVitestImpl(projectPath);
+        res.json({ success: true, result });
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ success: false, error: (e as any).error || e });
+      }
+    });
+  },
+};
