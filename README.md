@@ -43,10 +43,27 @@ docker run -p 3000:3000 -v $(pwd)/projects:/app/projects vitest-mcp-server
 
 ### Environment Variables
 ```bash
-# Required for AI features (optional)
+# LLM Provider Configuration (choose one)
+# OpenAI (default)
 export OPENAI_API_KEY=your_openai_api_key
 
-# Server configuration
+# LM Studio
+export LLM_PROVIDER=lmstudio
+export LMSTUDIO_BASE_URL=http://localhost:1234
+
+# Ollama  
+export LLM_PROVIDER=ollama
+export OLLAMA_BASE_URL=http://localhost:11434
+
+# llama.cpp Server
+export LLM_PROVIDER=llamacpp
+export LLAMACPP_BASE_URL=http://localhost:8080
+
+# MLX (Apple Silicon)
+export LLM_PROVIDER=mlx
+export LLM_MODEL=/path/to/your/model
+
+# Common settings for all providers
 export PORT=3000
 export LOG_LEVEL=info
 export NODE_ENV=production
@@ -71,7 +88,207 @@ export NODE_ENV=production
 - `POST /generate-workflow` - Create CI/CD workflow configurations
 
 ### AI-Specific Endpoints
-- `GET /ai-health` - Check OpenAI API configuration and connectivity
+- `GET /ai-health` - Check current LLM provider configuration and connectivity
+
+## 🤖 LLM Provider Configuration
+
+The server supports multiple LLM providers, giving you flexibility to use cloud services or run models locally for privacy and cost savings.
+
+### Supported Providers
+
+#### 1. **OpenAI** (Default)
+Cloud-based API with GPT models.
+
+```bash
+export LLM_PROVIDER=openai
+export OPENAI_API_KEY=your_api_key_here
+export LLM_MODEL=gpt-4o-mini  # or gpt-3.5-turbo
+export OPENAI_BASE_URL=https://api.openai.com/v1
+```
+
+**Configuration in mcp.config.json:**
+```json
+{
+  "llmProvider": {
+    "type": "openai",
+    "baseUrl": "https://api.openai.com/v1",
+    "model": "gpt-4o-mini",
+    "apiKey": "${OPENAI_API_KEY}",
+    "maxTokens": 2000,
+    "temperature": 0.2
+  }
+}
+```
+
+#### 2. **LM Studio** 
+Desktop application for running local models with OpenAI-compatible API.
+
+**Setup:**
+1. Download [LM Studio](https://lmstudio.ai/)
+2. Load a local model (e.g., Llama 2, CodeLlama, Mistral)
+3. Start the server (default: http://localhost:1234)
+
+```bash
+export LLM_PROVIDER=lmstudio
+export LMSTUDIO_BASE_URL=http://localhost:1234
+export LLM_MODEL=local-model-name
+```
+
+**Configuration in mcp.config.json:**
+```json
+{
+  "llmProvider": {
+    "type": "lmstudio",
+    "baseUrl": "http://localhost:1234",
+    "model": "llama-2-7b-chat",
+    "maxTokens": 2000,
+    "temperature": 0.2
+  }
+}
+```
+
+#### 3. **Ollama**
+Lightweight containerization for local LLMs.
+
+**Setup:**
+1. Install [Ollama](https://ollama.ai/)
+2. Pull a model: `ollama pull llama2`
+3. Server runs on http://localhost:11434
+
+```bash
+export LLM_PROVIDER=ollama
+export OLLAMA_BASE_URL=http://localhost:11434
+export LLM_MODEL=llama2
+```
+
+**Configuration in mcp.config.json:**
+```json
+{
+  "llmProvider": {
+    "type": "ollama",
+    "baseUrl": "http://localhost:11434",
+    "model": "llama2",
+    "maxTokens": 2000,
+    "temperature": 0.2
+  }
+}
+```
+
+#### 4. **llama.cpp Server**
+High-performance inference for LLMs with HTTP server.
+
+**Setup:**
+1. Build llama.cpp with server support
+2. Start the HTTP server: `./server -m model.gguf -host 0.0.0.0 -port 8080`
+
+```bash
+export LLM_PROVIDER=llamacpp
+export LLAMACPP_BASE_URL=http://localhost:8080
+export LLM_MODEL=model.gguf
+```
+
+**Configuration in mcp.config.json:**
+```json
+{
+  "llmProvider": {
+    "type": "llamacpp",
+    "baseUrl": "http://localhost:8080",
+    "model": "codellama-7b.gguf",
+    "maxTokens": 2000,
+    "temperature": 0.2
+  }
+}
+```
+
+#### 5. **MLX** (Apple Silicon)
+Apple's ML framework for efficient inference on M1/M2 chips.
+
+**Setup:**
+1. Install MLX following [Apple's documentation](https://ml-explore.github.io/mlx/build/)
+2. Ensure your model is accessible locally
+3. Install MLX Python package: `pip install mlx-lm`
+
+```bash
+export LLM_PROVIDER=mlx
+export LLM_MODEL=/path/to/your/model
+```
+
+**Configuration in mcp.config.json:**
+```json
+{
+  "llmProvider": {
+    "type": "mlx",
+    "model": "./models/llama-2-7b-mlx",
+    "maxTokens": 2000,
+    "temperature": 0.2
+  }
+}
+```
+
+### Provider Selection Methods
+
+#### Method 1: Environment Variables (Recommended)
+Set `LLM_PROVIDER` to specify your chosen provider:
+```bash
+export LLM_PROVIDER=lmstudio  # or ollama, llamacpp, mlx, openai
+```
+
+#### Method 2: Configuration File
+Edit `mcp.config.json` and set the `llmProvider.type` field.
+
+#### Method 3: Health Check Endpoint
+Test provider connectivity:
+```bash
+curl http://localhost:3000/ai-health
+```
+
+### Provider Health Monitoring
+All providers support health checks via the `/ai-health` endpoint:
+- **OpenAI**: Validates API key and model availability
+- **LM Studio/Ollama/llama.cpp**: Checks server connectivity  
+- **MLX**: Verifies Python environment and model accessibility
+
+### Model Recommendations by Provider
+
+| Use Case | Recommended Models |
+|----------|-------------------|
+| **Code Generation** | CodeLlama, StarCoder, DeepSeek Coder |
+| **General Purpose** | Llama 2/3, Mistral, Mixtral |
+| **Low Resource** | TinyLlama, Phi-2/3 |
+| **High Quality** | Llama 3 70B, GPT-4, Claude |
+
+### Performance Considerations
+
+| Provider | Speed | Resource Usage | Quality |
+|----------|-------|----------------|--------|
+| **OpenAI** | ⚡⚡⚡ | 💰 API Costs | ⭐⭐⭐⭐⭐ |
+| **LM Studio** | ⚡⚡ | 💻 Local CPU/GPU | ⭐⭐⭐⭐ |
+| **Ollama** | ⚡⚡ | 🐳 Docker + Local | ⭐⭐⭐ |
+| **llama.cpp** | ⚡⚡⚡ | 🔧 Optimized C++ | ⭐⭐⭐ |
+| **MLX** | ⚡⚡⚡🍎 | 🍎 Apple Silicon Only | ⭐⭐⭐⭐ |
+
+### Troubleshooting Local LLMs
+
+#### Common Issues:
+1. **Connection Refused**: Ensure your local server is running on the correct port
+2. **Model Not Found**: Verify model name and file path are correct
+3. **Out of Memory**: Try smaller models or increase system RAM
+4. **Slow Generation**: Check CPU/GPU utilization and consider quantized models
+
+#### Debug Commands:
+```bash
+# Test LM Studio connectivity
+curl http://localhost:1234/v1/models
+
+# Test Ollama connectivity  
+curl http://localhost:11434/api/tags
+
+# Check llama.cpp server health
+curl http://localhost:8080/health
+
+# Verify MLX installation
+python3 -c "import mlx_lm; print('MLX installed correctly')"
+```
 
 ## 🎯 Usage Examples
 
@@ -93,9 +310,9 @@ curl -X POST http://localhost:3000/generate-tests \
   -d '{"projectPath":"/path/to/your/react-vite-project"}'
 ```
 
-### Advanced AI-Powered Workflow
+### Advanced AI-Powered Workflow (Any LLM Provider)
 ```bash
-# Generate high-quality tests using OpenAI
+# Generate high-quality tests using your configured LLM provider
 curl -X POST http://localhost:3000/ai-generate-tests \
   -H "Content-Type: application/json" \
   -d '{
@@ -192,13 +409,14 @@ The server uses a dynamic plugin system. To add new tools:
 ## 🤖 AI Test Generation
 
 ### Features
+- **Multi-LLM Support** - Works with OpenAI, LM Studio, Ollama, llama.cpp, and MLX
 - **Context-Aware** - Analyzes component structure and props
 - **High-Quality Tests** - Uses React Testing Library best practices
 - **Edge Case Coverage** - Automatically handles common scenarios
 - **Snapshot Testing** - Includes snapshot tests when appropriate
 
 ### Requirements
-- OpenAI API key in environment variables
+- **Any LLM Provider** - OpenAI API key, LM Studio server, Ollama installation, llama.cpp server, or MLX setup
 - Valid React component files (.tsx/.jsx)
 - Project structure that allows relative imports
 

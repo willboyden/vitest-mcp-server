@@ -33,7 +33,7 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# Check if server is running
+# Check if server is running and LLM provider health
 check_server() {
     log_info "Checking if MCP server is running..."
     
@@ -44,6 +44,12 @@ check_server() {
         echo ""
         log_info "Server Status:"
         curl -s "$BASE/health" | jq '.' || echo "Run 'npm install' to get jq for formatted output"
+        
+        # Check LLM provider health
+        echo ""
+        log_info "LLM Provider Status:"
+        curl -s "$BASE/ai-health" | jq '.' || echo "LLM health check requires jq"
+        
         echo ""
     else
         log_error "MCP server is not running at $BASE"
@@ -67,6 +73,29 @@ setup_vitest() {
         log_success "Vitest setup completed successfully"
     else
         log_warning "Vitest setup response: $response"
+    fi
+}
+
+# Check and suggest LLM provider configuration
+check_llm_config() {
+    log_info "Checking LLM provider configuration..."
+    
+    local llm_health=$(curl -s "$BASE/ai-health")
+    
+    if echo "$llm_health" | jq -e '.status == "healthy"' > /dev/null 2>&1; then
+        local provider=$(echo "$llm_health" | jq -r '.provider')
+        log_success "✅ LLM provider '$provider' is healthy and ready!"
+    else
+        log_warning "⚠️ No healthy LLM provider detected."
+        echo ""
+        log_info "💡 Quick setup options:"
+        echo "   1. LM Studio (easiest): https://lmstudio.ai/"
+        echo "   2. Ollama: curl -fsSL https://ollama.ai/install.sh | sh"
+        echo "   3. llama.cpp: Build from source with server support"
+        echo "   4. MLX (Apple Silicon): pip install mlx-lm"
+        echo ""
+        log_info "📖 See LOCAL_LLM_SETUP.md for detailed instructions"
+        echo ""
     fi
 }
 
@@ -134,47 +163,68 @@ generate_basic_tests() {
     fi
 }
 
-# Generate AI-powered tests (if OpenAI API key is available)
+# Test local LLM configuration
+test_local_llm() {
+    log_info "Testing local LLM provider configuration..."
+    
+    # Test AI health endpoint
+    response=$(curl -s "$BASE/ai-health")
+    
+    if echo "$response" | jq -e '.status == "healthy"' > /dev/null 2>&1; then
+        local provider=$(echo "$response" | jq -r '.provider')
+        log_success "✅ LLM provider is healthy: $provider"
+    else
+        local status=$(echo "$response" | jq -r '.status')
+        log_warning "⚠️  LLM provider status: $status"
+        
+        # Show configuration instructions
+        local config_info=$(curl -s "$BASE/llm-config")
+        if echo "$config_info" | jq -e '.status == "not_configured"' > /dev/null 2>&1; then
+            echo ""
+            log_info "📝 LLM Configuration Instructions:"
+            echo "$config_info" | jq -r '.instructions' || true
+        fi
+    fi
+}
+
+# Generate AI-powered tests (if LLM is configured)
 generate_ai_tests() {
     log_info "Attempting to generate AI-powered tests..."
     
-    # Check if OpenAI API key is configured
-    local ai_health=$(curl -s "$BASE/ai-health")
+    # Check if any LLM provider is configured
+    test_local_llm
+    echo ""
     
-    if echo "$ai_health" | jq -e '.status == "healthy"' > /dev/null 2>&1; then
-        log_success "OpenAI API is configured and working"
+    # Get uncovered files from previous analysis
+    local uncovered_files=$(jq -r '.uncovered[] | {file: .file, type: .type}' /tmp/coverage_analysis.json 2>/dev/null | jq -c '.' || echo "")
+    
+    if [ -z "$uncovered_files" ]; then
+        log_info "No uncovered files available for AI test generation"
+        return 0
+    fi
+    
+    log_info "Generating AI tests for uncovered files..."
+    
+    response=$(curl -s -X POST "$BASE/ai-generate-tests" \
+        -H "Content-Type: application/json" \
+        -d "{\"projectPath\":\"$PROJECT\",\"uncoveredFiles\":[$uncovered_files]}")
+    
+    if echo "$response" | jq -e '.success' > /dev/null 2>&1; then
+        local ai_generated_count=$(echo "$response" | jq '.generatedTestFiles | length')
+        local provider_name=$(echo "$response" | jq -r '.message' || echo "LLM")
         
-        # Get uncovered files from previous analysis
-        local uncovered_files=$(jq -r '.uncovered[] | {file: .file, type: .type}' /tmp/coverage_analysis.json 2>/dev/null | jq -c '.' || echo "")
-        
-        if [ -n "$uncovered_files" ]; then
-            log_info "Generating AI tests for uncovered files..."
+        if [ "$ai_generated_count" -gt 0 ]; then
+            log_success "🤖 AI generated $ai_generated_count high-quality test files ($provider_name)"
             
-            response=$(curl -s -X POST "$BASE/ai-generate-tests" \
-                -H "Content-Type: application/json" \
-                -d "{\"projectPath\":\"$PROJECT\",\"uncoveredFiles\":[$uncovered_files]}")
-            
-            if echo "$response" | jq -e '.success' > /dev/null 2>&1; then
-                local ai_generated_count=$(echo "$response" | jq '.generatedTestFiles | length')
-                
-                if [ "$ai_generated_count" -gt 0 ]; then
-                    log_success "🤖 AI generated $ai_generated_count high-quality test files"
-                    
-                    echo ""
-                    log_info "AI-generated test files:"
-                    echo "$response" | jq -r '.generatedTestFiles[]' || true
-                else
-                    log_info "AI test generation completed but no files were created"
-                fi
-            else
-                log_warning "AI test generation failed: $response"
-            fi
+            echo ""
+            log_info "AI-generated test files:"
+            echo "$response" | jq -r '.generatedTestFiles[]' || true
         else
-            log_info "No uncovered files available for AI test generation"
+            log_info "AI test generation completed but no files were created"
         fi
     else
-        log_warning "OpenAI API is not configured or working: $ai_health"
-        log_info "To enable AI features, set OPENAI_API_KEY environment variable"
+        log_warning "AI test generation failed: $response"
+        log_info "💡 Tip: Check your LLM configuration using /llm-config endpoint"
     fi
 }
 
@@ -295,6 +345,9 @@ main() {
     check_server
     echo ""
     
+    check_llm_config
+    echo ""
+    
     setup_vitest
     echo ""
     
@@ -340,7 +393,12 @@ case "${1:-}" in
         echo "  project_path    Path to the React Vite project (default: current directory)"
         echo ""
         echo "Environment Variables:"
-        echo "  OPENAI_API_KEY  OpenAI API key for AI test generation (optional)"
+        echo "  LLM_PROVIDER         Provider type (openai, lmstudio, ollama, llamacpp, mlx)"
+        echo "  OPENAI_API_KEY       OpenAI API key (for OpenAI provider)"
+        echo "  LMSTUDIO_BASE_URL    LM Studio server URL (default: http://localhost:1234)"
+        echo "  OLLAMA_BASE_URL      Ollama server URL (default: http://localhost:11434)"
+        echo "  LLAMACPP_BASE_URL    llama.cpp server URL (default: http://localhost:8080)"
+        echo "  LLM_MODEL            Model name/path to use"
         echo ""
         echo "This script demonstrates the complete workflow:"
         echo "1. Check server health"
