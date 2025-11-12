@@ -1,16 +1,22 @@
 import path from 'path';
 import fs from 'fs-extra';
-import OpenAI from 'openai';
+import { localLLMService } from '../services/localLLMService.js';
 
 /**
- * AI-assisted test writer that generates high-quality Vitest tests using OpenAI
+ * AI-assisted test writer that supports multiple LLM providers (OpenAI, LM Studio, Ollama, llama.cpp, MLX)
  */
 export async function generateAITests(projectRoot: string, uncoveredFiles: any[]): Promise<string[]> {
-  const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-  });
-
   const generatedFiles: string[] = [];
+
+  // Initialize the local LLM service
+  const isInitialized = await localLLMService.initialize();
+  
+  if (!isInitialized) {
+    throw new Error('LLM service could not be initialized. Please check your configuration.');
+  }
+
+  const providerName = localLLMService.getProviderName();
+  console.log(`🤖 Using ${providerName} for AI test generation`);
 
   for (const uncovered of uncoveredFiles.slice(0, 5)) { // Limit to 5 files per request
     const filePath = path.isAbsolute(uncovered.file) ? uncovered.file : path.join(projectRoot, uncovered.file);
@@ -23,7 +29,7 @@ export async function generateAITests(projectRoot: string, uncoveredFiles: any[]
     const ext = path.extname(filePath);
     const componentName = path.basename(filePath, ext);
 
-    // Generate prompt for the AI
+    // Generate prompt for the LLM
     const prompt = `You are a senior front-end engineer. Write a **Vitest** test file for the React component located at "${filePath}".  
 The test must:
 1. Import the component with proper relative path.
@@ -41,17 +47,7 @@ ${fileContent}
 \`\`\``;
 
     try {
-      const response = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: 'You are a helpful assistant that writes high-quality React component tests.' },
-          { role: 'user', content: prompt }
-        ],
-        temperature: 0.2,
-        max_tokens: 2000,
-      });
-
-      const generatedTest = response.choices[0]?.message?.content;
+      const generatedTest = await localLLMService.generateCompletion(prompt);
       
       if (!generatedTest) continue;
 
@@ -70,7 +66,7 @@ ${fileContent}
       }
 
     } catch (error) {
-      console.error(`Failed to generate AI test for ${filePath}:`, error);
+      console.error(`Failed to generate AI test for ${filePath} using ${providerName}:`, error);
     }
   }
 
@@ -88,10 +84,6 @@ export default {
         return res.status(400).json({ error: 'Missing projectPath' });
       }
       
-      if (!process.env.OPENAI_API_KEY) {
-        return res.status(400).json({ error: 'OpenAI API key not configured' });
-      }
-
       try {
         const files = uncoveredFiles || [];
         const generated = await generateAITests(projectPath, files);
@@ -99,7 +91,7 @@ export default {
         res.json({ 
           success: true, 
           generatedTestFiles: generated,
-          message: `Generated ${generated.length} AI-assisted test files`
+          message: `Generated ${generated.length} AI-assisted test files using ${localLLMService.getProviderName()}`
         });
       } catch (e) {
         console.error('AI Test generation error:', e);
@@ -110,32 +102,110 @@ export default {
       }
     });
 
-    // Health check endpoint for OpenAI configuration
+    // Enhanced health check endpoint for LLM configuration
     app.get('/ai-health', async (_req: any, res: any) => {
-      const hasApiKey = !!process.env.OPENAI_API_KEY;
-      
-      if (!hasApiKey) {
-        return res.json({ 
-          status: 'not_configured', 
-          message: 'OpenAI API key not found in environment variables' 
-        });
-      }
-
       try {
-        const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-        // Simple test to verify API key works
-        await openai.models.list();
+        const isInitialized = await localLLMService.initialize();
+        
+        if (!isInitialized) {
+          return res.json({ 
+            status: 'not_configured', 
+            message: 'LLM service could not be initialized',
+            availableProviders: ['openai', 'lmstudio', 'ollama', 'llamacpp', 'mlx']
+          });
+        }
+
+        const providerName = localLLMService.getProviderName();
         
         res.json({ 
           status: 'healthy', 
-          message: 'OpenAI API key is valid and working' 
+          message: `${providerName} provider is ready`,
+          provider: providerName
         });
       } catch (error) {
         res.json({ 
           status: 'unhealthy', 
-          message: `OpenAI API key validation failed: ${(error as any).message}` 
+          message: `LLM service error: ${(error as any).message}`,
+          availableProviders: ['openai', 'lmstudio', 'ollama', 'llamacpp', 'mlx']
+        });
+      }
+    });
+
+    // LLM provider configuration endpoint
+    app.get('/llm-config', async (_req: any, res: any) => {
+      try {
+        const isInitialized = await localLLMService.initialize();
+        
+        if (!isInitialized) {
+          return res.json({
+            status: 'not_configured',
+            message: 'No LLM provider configured'
+          });
+        }
+
+        const config = {
+          status: 'configured',
+          provider: localLLMService.getProviderName(),
+          instructions: getConfigurationInstructions()
+        };
+
+        res.json(config);
+      } catch (error) {
+        res.status(500).json({
+          status: 'error',
+          message: (error as any).message
         });
       }
     });
   },
 };
+
+function getConfigurationInstructions(): string {
+  return `
+## LLM Configuration Options
+
+### OpenAI (Default)
+Set environment variables:
+- \`LLM_PROVIDER=openai\`
+- \`OPENAI_API_KEY=your_key_here\`
+
+### LM Studio
+1. Download and run LM Studio from https://lmstudio.ai/
+2. Load a local model
+3. Start the server (usually on http://localhost:1234)
+Set environment variables:
+- \`LLM_PROVIDER=lmstudio\`
+- \`LMSTUDIO_BASE_URL=http://localhost:1234\`
+
+### Ollama
+1. Install Ollama from https://ollama.ai/
+2. Pull a model: \`ollama pull llama2\`
+3. Start the server (usually on http://localhost:11434)
+Set environment variables:
+- \`LLM_PROVIDER=ollama\`
+- \`OLLAMA_BASE_URL=http://localhost:11434\`
+
+### llama.cpp Server
+1. Build and run llama.cpp server with your model
+2. Start the server (usually on http://localhost:8080)
+Set environment variables:
+- \`LLM_PROVIDER=llamacpp\`
+- \`LLAMACPP_BASE_URL=http://localhost:8080\`
+
+### MLX (Apple Silicon)
+1. Install MLX following Apple’s documentation
+2. Ensure your model is accessible locally
+Set environment variables:
+- \`LLM_PROVIDER=mlx\`
+- \`LLM_MODEL=/path/to/your/model\`
+
+Alternatively, configure via mcp.config.json:
+{
+  "llmProvider": {
+    "type": "lmstudio",
+    "baseUrl": "http://localhost:1234",
+    "model": "local-model"
+  }
+}
+`;
+}
